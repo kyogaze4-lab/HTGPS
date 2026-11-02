@@ -25,7 +25,15 @@ import android.widget.Toast;
 
 import androidx.webkit.WebViewAssetLoader;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
@@ -132,6 +140,8 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                WebResourceResponse t = satTile(request.getUrl());
+                if (t != null) return t;
                 return loader.shouldInterceptRequest(request.getUrl());
             }
 
@@ -177,6 +187,54 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else web.loadUrl(START_URL);
         if (!hasLocation()) requestLocation();
+    }
+
+    /**
+     * Mosaicos de imagen satelital: se guardan en el teléfono la primera vez que se ven,
+     * y después se muestran desde ahí aunque no haya señal.
+     */
+    private WebResourceResponse satTile(Uri u) {
+        if (!"server.arcgisonline.com".equals(u.getHost())) return null;
+        String path = u.getPath();
+        if (path == null || !path.contains("/World_Imagery/MapServer/tile/")) return null;
+        String[] seg = path.substring(path.indexOf("/tile/") + 6).split("/");
+        if (seg.length != 3) return null;
+        for (String s : seg) if (!s.matches("\\d{1,8}")) return null;
+        File dir = new File(getFilesDir(), "mosaicos");
+        File f = new File(dir, seg[0] + "_" + seg[1] + "_" + seg[2] + ".jpg");
+        try {
+            if (f.length() > 0) return tileResponse(new FileInputStream(f));
+            HttpURLConnection c = (HttpURLConnection) new URL(u.toString()).openConnection();
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(15000);
+            if (c.getResponseCode() != 200) { c.disconnect(); return null; }
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            try (InputStream in = c.getInputStream()) {
+                byte[] b = new byte[16384];
+                int n;
+                while ((n = in.read(b)) > 0) bo.write(b, 0, n);
+            }
+            c.disconnect();
+            byte[] data = bo.toByteArray();
+            if (data.length > 0) {
+                dir.mkdirs();
+                File tmp = new File(dir, f.getName() + ".tmp");
+                try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(data); }
+                tmp.renameTo(f);
+            }
+            return tileResponse(new ByteArrayInputStream(data));
+        } catch (Exception e) {
+            return null; // sin señal y sin copia guardada: el mapa queda sin ese mosaico
+        }
+    }
+
+    private WebResourceResponse tileResponse(InputStream in) {
+        WebResourceResponse r = new WebResourceResponse("image/jpeg", null, in);
+        java.util.Map<String, String> h = new java.util.HashMap<>();
+        h.put("Access-Control-Allow-Origin", "*");
+        h.put("Cache-Control", "max-age=31536000");
+        r.setResponseHeaders(h);
+        return r;
     }
 
     private boolean hasLocation() {
