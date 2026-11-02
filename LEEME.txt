@@ -1,0 +1,31 @@
+REPLANTEO — cómo obtener el APK (gratis, ~15 minutos la primera vez)
+
+GitHub compila el APK en sus servidores con las herramientas oficiales de Android.
+Tú solo subes esta carpeta y descargas el resultado.
+
+1. Descomprime este zip en la computadora.
+2. Entra a github.com y crea una cuenta (si no tienes).
+3. Botón "+" (arriba a la derecha) > "New repository".
+   Nombre: replanteo-android. Puede ser Private. Botón "Create repository".
+4. En la página nueva, toca el enlace "uploading an existing file".
+5. Arrastra TODO el contenido de la carpeta descomprimida (incluida la carpeta
+   oculta ".github"). Botón "Commit changes".
+   * Si Windows no muestra ".github": en el Explorador, Vista > Mostrar >
+     Elementos ocultos, y vuelve a arrastrar.
+6. Abre la pestaña "Actions". Verás "Compilar APK" en marcha (círculo amarillo).
+   Tarda de 4 a 6 minutos. Cuando quede en verde, entra a esa ejecución.
+7. Abajo, en "Artifacts", descarga "Replanteo-APK". Es un zip con Replanteo.apk.
+
+Instalar en el teléfono:
+8. Pasa Replanteo.apk al teléfono (WhatsApp a ti mismo, Drive o cable).
+9. Ábrelo. Android pedirá permitir "instalar apps desconocidas" para esa app
+   (WhatsApp, Archivos, etc.): acéptalo. Si Play Protect avisa, toca
+   "Más detalles > Instalar de todas formas": es normal en apps que no vienen
+   de la Play Store.
+10. Al abrir Replanteo, permite la ubicación "mientras se usa la app".
+
+Actualizar: si después cambio la app, sube los archivos nuevos al mismo
+repositorio; GitHub vuelve a compilar y el APK nuevo se instala encima del
+anterior sin perder tus trabajos (la llave de firma va incluida).
+
+Si "Actions" no arranca solo: pestaña Actions > "Compilar APK" > "Run workflow".

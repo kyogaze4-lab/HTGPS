@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'mx.tavizon.replanteo'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'mx.tavizon.replanteo'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        // Llave fija incluida en el proyecto: permite instalar versiones nuevas encima de la anterior.
+        campo {
+            storeFile file('replanteo.keystore')
+            storePassword 'replanteo'
+            keyAlias 'replanteo'
+            keyPassword 'replanteo'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.campo
+        }
+        debug {
+            signingConfig signingConfigs.campo
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+}
