@@ -415,19 +415,29 @@ async function unzipKml(buf){
 }
 
 /* ================= GPS y brújula ================= */
-let watchId=null;
+let watchId=null,lastT=0,lastRecv=0,ivl=null,sats=null;
+function onFix(f){
+  if(lastT&&f.t>lastT){const d=(f.t-lastT)/1000;if(d<30)ivl=ivl==null?d:ivl*0.7+d*0.3;}
+  lastT=f.t;lastRecv=Date.now();gps=f;
+  if(avg)avg.fixes.push(gps);
+  render();
+}
+/* Lecturas directas del receptor GPS del teléfono (app Android) */
+window.__nativeFix=function(lat,lon,acc,hd,spd,t){onFix({lat,lon,acc,hd:hd<0?null:hd,spd:spd<0?null:spd,t});};
+window.__nativeSats=function(u,v){sats={u,v};};
+window.__nativeErr=function(m){toast(m);};
+setInterval(()=>{if(watchId!==null&&gps&&Date.now()-lastRecv>4000)render();},1000);
 function startGPS(){
-  if(!("geolocation" in navigator)){toast("Este navegador no tiene GPS");return;}
   if(watchId!==null)return;
+  if(window.AndroidBridge&&AndroidBridge.startGps){watchId="native";AndroidBridge.startGps();S.gpsOn=true;save();startCompass();render();return;}
+  if(!("geolocation" in navigator)){toast("Este navegador no tiene GPS");return;}
   watchId=navigator.geolocation.watchPosition(p=>{
-    gps={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy,hd:p.coords.heading,spd:p.coords.speed,t:p.timestamp};
-    if(avg)avg.fixes.push(gps);
-    render();
+    onFix({lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy,hd:p.coords.heading,spd:p.coords.speed,t:p.timestamp});
   },e=>{toast(e.code===1?"Permite la ubicación para usar el GPS":"Sin señal GPS todavía");if(e.code===1){stopGPS();}},
   {enableHighAccuracy:true,maximumAge:0,timeout:30000});
   S.gpsOn=true;save();startCompass();wake();render();
 }
-function stopGPS(){if(watchId!==null)navigator.geolocation.clearWatch(watchId);watchId=null;gps=null;S.gpsOn=false;save();render();}
+function stopGPS(){if(watchId==="native")AndroidBridge.stopGps();else if(watchId!==null)navigator.geolocation.clearWatch(watchId);watchId=null;gps=null;sats=null;ivl=null;lastT=0;S.gpsOn=false;save();render();}
 $("gpsBtn").onclick=()=>watchId===null?startGPS():stopGPS();
 let compassOn=false;
 function startCompass(){
@@ -509,7 +519,7 @@ function renderGuide(){
     $("dBig").textContent=fmtM(r.d);$("dUnit").textContent="m";
     const ns=r.o.n>=0?"Norte":"Sur",eo=r.o.e>=0?"Este":"Oeste";
     $("dDir").textContent=here?"Estás sobre el vértice":`${fmtM(Math.abs(r.o.n))} m ${ns} · ${fmtM(Math.abs(r.o.e))} m ${eo}`;
-    $("dHint").textContent=`Rumbo ${r.b.toFixed(0)}° ${CARD(r.b)} · precisión GPS ±${gps.acc.toFixed(1)} m`+(heading==null?" · sin brújula":"")+(r.d<gps.acc&&!here?" · ya estás dentro del error del GPS: afina con cinta":"");
+    $("dHint").textContent=`Rumbo ${r.b.toFixed(0)}° ${CARD(r.b)} · precisión GPS ±${gps.acc.toFixed(1)} m`+(ivl?` · actualiza c/${ivl.toFixed(1)} s`:"")+(heading==null?" · sin brújula":"")+(r.d<gps.acc&&!here?" · ya estás dentro del error del GPS: afina con cinta":"");
     box.classList.toggle("here",here);
     if(here&&!lastHere&&navigator.vibrate)navigator.vibrate(200);lastHere=here;
   }
@@ -652,7 +662,9 @@ function render(){
   $("hJob").textContent=j?j.name:"Sin trabajo";
   $("hSub").textContent=j?`${j.pts.filter(p=>p.status==="ok").length} de ${j.pts.length} marcados`:"Importa tus vértices en Trabajo";
   const ch=$("gpsChip");ch.className="chip"+(gps?(gps.acc<=3?" good":gps.acc<=8?" mid":" poor"):"");
-  ch.lastElementChild.textContent=watchId===null?"GPS apagado":gps?`±${gps.acc.toFixed(1)} m`:"Buscando…";
+  const stale=gps&&Date.now()-lastRecv>4000;
+  if(stale)ch.className="chip poor";
+  ch.lastElementChild.textContent=watchId===null?"GPS apagado":!gps?(sats?`Buscando… ${sats.u}/${sats.v} sat`:"Buscando…"):stale?`Sin señal ${Math.round((Date.now()-lastRecv)/1000)} s`:`±${gps.acc.toFixed(1)} m`+(sats?` · ${sats.u} sat`:"");
   if(curView==="vGuide")renderGuide();
   else if(curView==="vList")renderList();
   else if(curView==="vMap"){if(!view.ready)fit();else drawMap();}
