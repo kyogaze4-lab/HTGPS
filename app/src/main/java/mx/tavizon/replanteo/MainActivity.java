@@ -4,8 +4,13 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.location.GnssStatus;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Looper;
 import android.view.WindowManager;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
@@ -22,6 +27,7 @@ import androidx.webkit.WebViewAssetLoader;
 
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final int REQ_LOCATION = 10;
@@ -34,6 +40,74 @@ public class MainActivity extends Activity {
     private String pendingGeoOrigin;
     private GeolocationPermissions.Callback pendingGeoCallback;
     private String pendingSaveText;
+
+    // GPS nativo: lecturas directas del receptor, sin pasar por el navegador
+    private LocationManager lm;
+    private boolean gpsWanted = false;
+    private boolean gpsRunning = false;
+    private long lastGpsFix = 0;
+
+    private final LocationListener gpsListener = new LocationListener() {
+        @Override
+        public void onLocationChanged(Location l) {
+            boolean isGps = LocationManager.GPS_PROVIDER.equals(l.getProvider());
+            if (isGps) lastGpsFix = System.currentTimeMillis();
+            else if (System.currentTimeMillis() - lastGpsFix < 5000) return; // con GPS activo se ignora la red
+            String js = String.format(Locale.US,
+                    "window.__nativeFix&&__nativeFix(%.8f,%.8f,%.2f,%.1f,%.2f,%d)",
+                    l.getLatitude(), l.getLongitude(),
+                    l.hasAccuracy() ? l.getAccuracy() : 99.0,
+                    l.hasBearing() ? l.getBearing() : -1.0,
+                    l.hasSpeed() ? l.getSpeed() : -1.0,
+                    l.getTime());
+            if (web != null) web.evaluateJavascript(js, null);
+        }
+        @Override public void onStatusChanged(String p, int s, Bundle b) { }
+        @Override public void onProviderEnabled(String p) { }
+        @Override public void onProviderDisabled(String p) {
+            if (LocationManager.GPS_PROVIDER.equals(p)) jsError("La ubicación del teléfono está apagada. Actívala en Ajustes.");
+        }
+    };
+
+    private final GnssStatus.Callback gnssCallback = new GnssStatus.Callback() {
+        @Override
+        public void onSatelliteStatusChanged(GnssStatus status) {
+            int used = 0, total = status.getSatelliteCount();
+            for (int i = 0; i < total; i++) if (status.usedInFix(i)) used++;
+            if (web != null) web.evaluateJavascript("window.__nativeSats&&__nativeSats(" + used + "," + total + ")", null);
+        }
+    };
+
+    private void jsError(String msg) {
+        if (web != null) web.evaluateJavascript("window.__nativeErr&&__nativeErr(" + org.json.JSONObject.quote(msg) + ")", null);
+    }
+
+    private void startNativeGps() {
+        gpsWanted = true;
+        if (gpsRunning) return;
+        if (!hasLocation()) { requestLocation(); return; }
+        if (lm == null) lm = (LocationManager) getSystemService(LOCATION_SERVICE);
+        try {
+            if (!lm.isProviderEnabled(LocationManager.GPS_PROVIDER))
+                jsError("La ubicación del teléfono está apagada. Actívala en Ajustes.");
+            // 0 ms y 0 m: cada lectura que entregue el receptor (normalmente 1 por segundo o más)
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, gpsListener, Looper.getMainLooper());
+            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER))
+                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000, 0, gpsListener, Looper.getMainLooper());
+            lm.registerGnssStatusCallback(gnssCallback);
+            gpsRunning = true;
+        } catch (SecurityException e) {
+            jsError("Permite la ubicación para usar el GPS");
+        }
+    }
+
+    private void stopNativeGps(boolean keepWanted) {
+        if (!keepWanted) gpsWanted = false;
+        if (!gpsRunning || lm == null) return;
+        lm.removeUpdates(gpsListener);
+        lm.unregisterGnssStatusCallback(gnssCallback);
+        gpsRunning = false;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -118,6 +192,10 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == REQ_LOCATION && gpsWanted) {
+            if (hasLocation()) startNativeGps();
+            else { gpsWanted = false; jsError("Permite la ubicación para usar el GPS"); }
+        }
         if (requestCode == REQ_LOCATION && pendingGeoCallback != null) {
             pendingGeoCallback.invoke(pendingGeoOrigin, hasLocation(), false);
             pendingGeoCallback = null;
@@ -146,8 +224,18 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Puente para que la página guarde los archivos exportados con el diálogo de Android. */
+    /** Puente entre la página y Android: archivos exportados y GPS nativo. */
     private class Bridge {
+        @JavascriptInterface
+        public void startGps() {
+            runOnUiThread(new Runnable() { @Override public void run() { startNativeGps(); } });
+        }
+
+        @JavascriptInterface
+        public void stopGps() {
+            runOnUiThread(new Runnable() { @Override public void run() { stopNativeGps(false); } });
+        }
+
         @JavascriptInterface
         public void saveFile(final String name, final String text, final String mime) {
             runOnUiThread(new Runnable() {
@@ -182,7 +270,20 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        stopNativeGps(true); // ahorra batería en segundo plano; se reanuda al volver
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (gpsWanted) startNativeGps();
+    }
+
+    @Override
     protected void onDestroy() {
+        stopNativeGps(false);
         if (web != null) web.destroy();
         super.onDestroy();
     }
